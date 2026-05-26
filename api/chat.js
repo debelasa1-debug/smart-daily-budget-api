@@ -1,20 +1,6 @@
-/**
- * Vercel Serverless Function — Gemini 2.5 Flash Proxy
- * File location: api/chat.js
- *
- * DEPLOY STEPS:
- * 1. Upload this folder to GitHub
- * 2. Go to vercel.com → Import repo
- * 3. Add environment variable:
- *      Name:  GEMINI_API_KEY
- *      Value: AIzaSyXXXXXXXX  (from aistudio.google.com/app/apikey)
- * 4. Deploy → get URL like https://smart-daily-budget-api.vercel.app
- * 5. Paste URL into super_index.html where it says YOUR-VERCEL-URL
- */
+module.exports = async function handler(req, res) {
 
-export default async function handler(req, res) {
-
-  // CORS — required for Android WebView
+  // CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -22,63 +8,63 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const { userPrompt, financialContext } = req.body;
-
-  if (!userPrompt || typeof userPrompt !== 'string') {
-    return res.status(400).json({ error: 'userPrompt is required' });
+  // Parse body manually if Vercel did not auto-parse it
+  let body = req.body;
+  if (!body || typeof body === 'string') {
+    try {
+      body = JSON.parse(req.body || '{}');
+    } catch (e) {
+      body = {};
+    }
   }
-  if (userPrompt.length > 1000) {
-    return res.status(400).json({ error: 'Message too long' });
+
+  const userPrompt = body.userPrompt;
+  const financialContext = body.financialContext || '';
+
+  if (!userPrompt) {
+    return res.status(400).json({ error: 'userPrompt is required', received: JSON.stringify(body) });
   }
 
-  // API key from Vercel environment — never inside the app
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    return res.status(500).json({ error: 'Server not configured. Contact support.' });
+    return res.status(500).json({ error: 'GEMINI_API_KEY not set on server' });
   }
 
-  // Full prompt with user financial context
-  const fullPrompt = `You are a friendly expert personal finance advisor in the Smart Daily Budget mobile app.
-
-${financialContext || ''}
-
-User question: ${userPrompt}
-
-Give concise, personalized, actionable financial advice. Be warm and encouraging. Under 150 words. Use 1-2 emojis max. Reference their actual numbers when helpful.`;
+  const fullPrompt = 'You are a friendly expert personal finance advisor in the Smart Daily Budget app.\n\n'
+    + financialContext + '\n\n'
+    + 'User question: ' + userPrompt + '\n\n'
+    + 'Give concise personalized actionable advice. Be warm. Under 150 words. Max 2 emojis.';
 
   try {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+    const geminiRes = await fetch(
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + apiKey,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents: [{ role: 'user', parts: [{ text: fullPrompt }] }],
-          generationConfig: {
-            maxOutputTokens: 350,
-            temperature: 0.7,
-          }
+          generationConfig: { maxOutputTokens: 350, temperature: 0.7 }
         })
       }
     );
 
-    const data = await response.json();
+    const data = await geminiRes.json();
 
-    if (!response.ok) {
-      console.error('[Gemini Error]', response.status, JSON.stringify(data));
-      return res.status(500).json({ error: data.error?.message || 'AI error. Try again.' });
+    if (!geminiRes.ok) {
+      return res.status(500).json({ error: data.error ? data.error.message : 'Gemini error ' + geminiRes.status });
     }
 
-    const reply = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    const reply = data.candidates && data.candidates[0] &&
+                  data.candidates[0].content && data.candidates[0].content.parts &&
+                  data.candidates[0].content.parts[0] && data.candidates[0].content.parts[0].text;
+
     if (!reply) {
-      console.error('[Gemini Empty]', JSON.stringify(data));
-      return res.status(500).json({ error: 'Empty AI response. Try again.' });
+      return res.status(500).json({ error: 'Empty response from Gemini', raw: JSON.stringify(data) });
     }
 
-    return res.status(200).json({ reply });
+    return res.status(200).json({ reply: reply });
 
-  } catch (error) {
-    console.error('[Proxy Error]', error);
-    return res.status(500).json({ error: 'Connection failed: ' + error.message });
+  } catch (err) {
+    return res.status(500).json({ error: 'Fetch failed: ' + err.message });
   }
 }
