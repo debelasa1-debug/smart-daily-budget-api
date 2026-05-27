@@ -1,8 +1,7 @@
 {
   "name": "smart-daily-budget-api",
   "version": "1.0.0",
-  "scripts": {
-    "build": "echo done"
-  },
-  "dependencies": {}
+  "engines": {
+    "node": "18.x"
+  }
 }
